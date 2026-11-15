@@ -22,6 +22,7 @@ DISPLAY_WIDTH = 40
 DISPLAY_HEIGHT = 15
 SERIAL_DEVICE = "/dev/ttyUSB0"
 SERIAL_BAUDRATE = 1200
+MAX_TOKENS = 2048  # Longest reply the model may send; longer ones are cut off.
 CLEAR_DELAY = 0.2  # Seconds the Tandy needs to clear its LCD before taking more text.
 # The Tandy only buffers 64 received bytes, so send in small chunks no faster
 # than it can draw them, even when the port itself is faster (e.g. an emulator pty).
@@ -47,7 +48,9 @@ STARTUP_SCREEN = (
 
 
 SYSTEM_PROMPT = """You are Overlord Tandy, a helpful AI running on a Tandy 200.
-Reply in plain ASCII only. Keep every reply brief: at most 15 short lines. Do not use markdown, colors, emojis, or characters outside the ASCII charset."""
+Reply in plain ASCII only. 
+Keep every reply brief: at most 15 short lines, unless the user asks for a longer response. 
+Do not use markdown, colors, emojis, or characters outside the ASCII charset."""
 
 HELP_TEXT = (
     "Overlord Tandy ready.\n"
@@ -229,7 +232,7 @@ def ask_model(client: OpenAI, model: str, messages: list[dict[str, str]]) -> str
         model=model,
         messages=messages,
         temperature=0.4,
-        max_tokens=512,
+        max_tokens=MAX_TOKENS,
     )
     if not response.choices:
         raise RuntimeError("The model returned no choices.")
@@ -242,7 +245,10 @@ def ask_model(client: OpenAI, model: str, messages: list[dict[str, str]]) -> str
         content = getattr(message, "reasoning", None)
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("The model returned an empty response.")
-    return ascii_text(content).strip()
+    answer = ascii_text(content).strip()
+    if response.choices[0].finish_reason == "length":
+        answer += "\n\n[Reply cut off: too long.]"
+    return answer
 
 
 def ask_model_until_complete(
@@ -344,7 +350,7 @@ def run(
             input_reader = lambda: read_input(connection)
     history: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    time.sleep(3.0)  # Show the title screen for a bit
+    time.sleep(1.0)  # Show the title screen for a bit
     display.clear()
     output(display, HELP_TEXT, drop_whitespace=False)
 
@@ -428,7 +434,7 @@ def run(
         for number, page in enumerate(pages, start=1):
             output(display, page, bell=number == 1)
             if number < len(pages):
-                output(display, f"More ({number}/{len(pages)}): Press enter for next page.", clear=False)
+                output(display, f"More ({number}/{len(pages)}): Press enter.", clear=False)
                 input_reader()
 
         input_reader() # Allow user to choose when to go next
