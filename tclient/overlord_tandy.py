@@ -1,10 +1,10 @@
 """Overlord Tandy host for the tb.do client.
 
 tb.do runs on the Tandy and does its own line editing, title screen and
-"thinking" animation. It sends each typed line ending in CR, and shows each
-line it receives (at most 39 chars) as a right-aligned reply. The first reply
-line ends in CR, which clears "thinking"; the rest end in RS (CHR$(30)), which
-prints them without the blank prompt row a CR would leave between lines.
+"thinking" animation. It sends each typed line ending in EOT (CHR$(4)).
+Each reply line it receives (at most 39 chars) ends in RS (CHR$(30)) and is
+shown right-aligned; the first one clears "thinking". The reply as a whole
+ends in EOT, which brings back the ">" prompt and unlocks the keyboard.
 This host only reads those lines, asks the model and sends the answer back.
 """
 
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 SERIAL_DEVICE = "/dev/ttyUSB0"
 SERIAL_BAUDRATE = 9600  # tb.do opens "COM:88N1ENN": 9600 baud, 8N1, XON/XOFF.
 LINE_WIDTH = 39  # tb.do keeps at most 39 chars of each received line.
-FIRST_LINE_END = "\r"  # Clears "thinking" and starts the reply on a new row.
-NEXT_LINE_END = "\x1e"  # Char: "RS" -- continues the reply on the next row.
+LINE_END = "\x1e"  # Char: "RS" -- ends one reply line.
+REPLY_END = "\x04"  # Char: "EOT" -- ends a reply, or a line typed on the Tandy.
 LINE_DELAY = 0.2  # Seconds between lines, so the BASIC program can keep up.
 MAX_TOKENS = 2048  # Longest reply the model may send; longer ones are cut off.
 REQUEST_TIMEOUT = 60  # Seconds before giving up on one API and trying the next.
@@ -141,29 +141,35 @@ def reply_lines(text: str) -> list[str]:
     return lines
 
 
+def send_data(connection: Any, data: bytes, label: str) -> bool:
+    """Write bytes to the Tandy, logging them; return False if the write timed out."""
+    started = time.monotonic()
+    try:
+        connection.write(data)
+        connection.flush()
+    except serial.SerialTimeoutException:
+        debug(f"TX {label} timed out after {WRITE_TIMEOUT}s: "
+              "the Tandy may have sent XOFF or the port is not connected")
+        return False
+    elapsed = time.monotonic() - started
+    debug(f"TX {label}: {data!r}" + (f" (write took {elapsed:.2f}s)" if elapsed > 0.5 else ""))
+    return True
+
+
 def send_response(connection: Any, text: str) -> None:
-    """Send text to the Tandy one line at a time."""
+    """Send text to the Tandy one line at a time, then end the reply."""
     lines = reply_lines(text)
     debug(f"TX {len(lines)} line(s)")
     for number, line in enumerate(lines, start=1):
-        ending = FIRST_LINE_END if number == 1 else NEXT_LINE_END
-        data = (line + ending).encode("ascii")
-        started = time.monotonic()
-        try:
-            connection.write(data)
-            connection.flush()
-        except serial.SerialTimeoutException:
-            debug(f"TX line {number} timed out after {WRITE_TIMEOUT}s: "
-                  "the Tandy may have sent XOFF or the port is not connected")
-            return
-        elapsed = time.monotonic() - started
-        debug(f"TX {number:>2}: {data!r}" + (f" (write took {elapsed:.2f}s)" if elapsed > 0.5 else ""))
+        if not send_data(connection, (line + LINE_END).encode("ascii"), f"{number:>2}"):
+            break
         time.sleep(LINE_DELAY)
-    debug("TX done")
+    # Always end the reply: until tb.do gets EOT it ignores the keyboard.
+    send_data(connection, REPLY_END.encode("ascii"), "end")
 
 
 def read_line(connection: Any) -> str:
-    """Wait for one CR-terminated line typed on the Tandy."""
+    """Wait for one EOT-terminated line typed on the Tandy."""
     buffer = bytearray()
     while True:
         data = connection.read(256)
@@ -171,13 +177,13 @@ def read_line(connection: Any) -> str:
             continue
         debug(f"RX raw {data!r}")
         for byte in data:
-            if byte == 13:  # CR ends the line.
+            if byte in (4, 13):  # EOT ends the line (CR too, from older tb.do).
                 text = buffer.decode("ascii", "replace").strip()
                 buffer.clear()
                 if text:
                     return text
                 debug("RX empty line ignored")
-            elif byte != 10:  # Ignore LF.
+            elif byte >= 32:  # Ignore LF and other control characters.
                 buffer.append(byte)
 
 
