@@ -164,11 +164,12 @@ def ask_model(client: OpenAI, model: str, messages: list[dict[str, str]]) -> str
     return ascii_text(content).strip()
 
 
-def thinking(display: TandyDisplay, stop: threading.Event) -> None:
+def thinking(display: Any, stop: threading.Event) -> None:
     """Animate a small status message while the model request is running."""
     frames = ("Thinking.   ", "Thinking..  ", "Thinking...")
     index = 0
     while not stop.is_set():
+        display.clear()
         output(display, frames[index % len(frames)])
         index += 1
         stop.wait(0.35)
