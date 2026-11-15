@@ -22,6 +22,11 @@ DISPLAY_WIDTH = 40
 DISPLAY_HEIGHT = 15
 SERIAL_DEVICE = "/dev/ttyUSB0"
 SERIAL_BAUDRATE = 1200
+CLEAR_DELAY = 0.2  # Seconds the Tandy needs to clear its LCD before taking more text.
+# The Tandy only buffers 64 received bytes, so send in small chunks no faster
+# than it can draw them, even when the port itself is faster (e.g. an emulator pty).
+WRITE_CHUNK = 16
+CHAR_DELAY = 1 / 100  # Seconds per character, a little slower than 1200 baud.
 CONFIG_PATH = Path.home() / "ai_apis.json"
 
 # Replace this placeholder with a compact ASCII startup design if desired.
@@ -91,7 +96,9 @@ def ascii_text(text: str) -> str:
     return text.encode("ascii", "replace").decode("ascii").replace("\t", " ")
 
 
-def display_lines(text: str, width: int = DISPLAY_WIDTH) -> list[str]:
+# Wrap one short of the full width: a full-width line makes the Tandy's cursor
+# wrap on its own, so the line break after it would leave a blank row.
+def display_lines(text: str, width: int = DISPLAY_WIDTH - 1) -> list[str]:
     """Wrap text into display-width ASCII lines."""
     safe = ascii_text(text).replace("\r", "")
     lines: list[str] = []
@@ -100,21 +107,48 @@ def display_lines(text: str, width: int = DISPLAY_WIDTH) -> list[str]:
     return lines
 
 
+def display_pages(text: str, height: int = DISPLAY_HEIGHT - 1) -> list[str]:
+    """Split text into screens, leaving the last row free for a prompt."""
+    lines = display_lines(text)
+    return ["\n".join(lines[i : i + height]) for i in range(0, len(lines), height)]
+
+
 class TandyDisplay:
     """Minimal 40x15 terminal renderer."""
 
     def __init__(self, connection: Any) -> None:
         self.connection = connection
+        self.row = 0  # Lines currently used on screen.
 
     def write(self, text: str) -> None:
-        self.connection.write(ascii_text(text).encode("ascii"))
+        data = ascii_text(text).encode("ascii")
+        for start in range(0, len(data), WRITE_CHUNK):
+            chunk = data[start : start + WRITE_CHUNK]
+            self.connection.write(chunk)
+            self.connection.flush()
+            time.sleep(len(chunk) * CHAR_DELAY)
 
     def clear(self) -> None:
         self.write("\x1bE")  # Char: "ESC E"
+        self.connection.flush()
+        time.sleep(CLEAR_DELAY)
+        self.row = 0
 
-    def render(self, text: str, bell: bool = False) -> None:
-        lines = display_lines(text)[:DISPLAY_HEIGHT]
-        self.write("\r\n".join(line[:DISPLAY_WIDTH] for line in lines))
+    def move_to_row(self, row: int) -> None:
+        self.write(f"\x1bY{chr(32 + row)}{chr(32)}")  # Char: "ESC Y <row> <col>"
+
+    def render(self, text: str, bell: bool = False, clear: bool = True) -> None:
+        lines = [line[:DISPLAY_WIDTH] for line in display_lines(text)][:DISPLAY_HEIGHT]
+        if clear or self.row == 0:
+            self.clear()
+            self.write("\r\n".join(lines))
+        elif self.row + len(lines) <= DISPLAY_HEIGHT:
+            self.write("\r\n" + "\r\n".join(lines))
+        else:
+            # Not enough room: overwrite the bottom lines instead of scrolling.
+            self.move_to_row(DISPLAY_HEIGHT - len(lines))
+            self.write("\r\n".join("\x1bK" + line for line in lines))  # Char: "ESC K"
+        self.row = min(self.row + len(lines), DISPLAY_HEIGHT)
         if bell:
             self.write("\x07")  # Char: "BEL"
 
@@ -134,6 +168,12 @@ class CliDisplay:
     def render(self, text: str, bell: bool = False) -> None:
         self.clear()
         self.write(text)
+    def render(self, text: str, bell: bool = False, clear: bool = True) -> None:
+        if clear:
+            self.clear()
+        else:
+            print()
+        print(ascii_text(text), end="", flush=True)
         if bell:
             self.write("\x07")  # Char: "BEL"
 
@@ -141,9 +181,9 @@ class CliDisplay:
         self.render(STARTUP_SCREEN)
 
 
-def output(display: Any, text: str, bell: bool = False) -> None:
+def output(display: Any, text: str, bell: bool = False, clear: bool = True) -> None:
     """Send application output through the active display."""
-    display.render(text, bell=bell)
+    display.render(text, bell=bell, clear=clear)
 
 
 def make_client(config: ApiConfig) -> OpenAI:
@@ -220,10 +260,9 @@ def thinking(display: Any, stop: threading.Event) -> None:
     display.clear()
     display.write("Thinking")
     while not stop.is_set():
-        previous = frames[(index - 1) % len(frames)] if index else ""
-        display.write("\b" * len(previous) + frames[index % len(frames)])
+        output(display, frames[index % len(frames)])
         index += 1
-        stop.wait(0.35)
+        stop.wait(0.5)
 
 
 def read_input(connection: Any) -> str:
@@ -275,10 +314,15 @@ def run(
         else:
             input_reader = lambda: read_input(connection)
     history: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    output(display, "Overlord Tandy ready.\nType a message.\n/new starts a new chat.")
+
+    input_reader()  # Allow user to choose when to go next
+    display.clear()
+    output(display, "Overlord Tandy ready.\nType a message.\n/new starts a new chat.\nPress enter to start.")
+
+    input_reader() # Allow user to choose when to go next
 
     while True:
-        output(display, "Your turn.\n> ")
+        output(display, "You > ")
         try:
             user_text = input_reader()
         except EOFError:
@@ -347,8 +391,14 @@ def run(
             continue
         history.append({"role": "assistant", "content": answer})
         display.clear()
-        output(display, answer, bell=True)
-        time.sleep(1.5)
+        pages = display_pages(answer + "\n\nDismiss: Press enter.")
+        for number, page in enumerate(pages, start=1):
+            output(display, page, bell=number == 1)
+            if number < len(pages):
+                output(display, f"More ({number}/{len(pages)}): Press enter.", clear=False)
+                input_reader()
+
+        input_reader() # Allow user to choose when to go next
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -373,16 +423,14 @@ def main(argv: list[str] | None = None) -> int:
             display.startup()
             config = load_api_config()
             client = make_client(config)
-            display.clear()
             run(None, client, config.model, display=display, input_reader=read_cli_input)
         else:
-            with serial.Serial(args.device, SERIAL_BAUDRATE, timeout=0.2) as connection:
+            with serial.Serial(args.device, SERIAL_BAUDRATE, timeout=0.2, xonxoff=True) as connection:
                 display = TandyDisplay(connection)
                 display.clear()
                 display.startup()
                 config = load_api_config()
                 client = make_client(config)
-                display.clear()
                 run(connection, client, config.model, display=display)
     except (RuntimeError, serial.SerialException) as exc:
         print(f"Overlord Tandy: {exc}", file=sys.stderr)
