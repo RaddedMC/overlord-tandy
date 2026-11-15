@@ -40,6 +40,7 @@ STARTUP_SCREEN = (
     "          #  #            #  #          \n"
     "          #  #            # #           \n"
     "           ##              #            \n"
+    "                                        \n"
     "Sam took all the RAM, this is all u get \n"
 )
 
@@ -314,7 +315,7 @@ def run(
 
     time.sleep(3.0)  # Show the title screen for a bit
     display.clear()
-    output(display, "Overlord Tandy ready.\nType a message.\n/new starts a new chat.\n/quit exits the program.\nPress enter to start.")
+    output(display, "Overlord Tandy ready.\n\n/new starts a new chat.\n/quit exits the program.\n\nPress enter to start.")
 
     input_reader() # Allow user to choose when to go next
 
@@ -392,7 +393,7 @@ def run(
         for number, page in enumerate(pages, start=1):
             output(display, page, bell=number == 1)
             if number < len(pages):
-                output(display, f"More ({number}/{len(pages)}): Press enter.", clear=False)
+                output(display, f"More ({number}/{len(pages)}): Press enter for next page.", clear=False)
                 input_reader()
 
         input_reader() # Allow user to choose when to go next
