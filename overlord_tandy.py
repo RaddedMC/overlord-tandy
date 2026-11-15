@@ -322,14 +322,14 @@ def run(
                 daemon=True,
             )
             watcher.start()
+        answer: str | None = None
+        request_error: Exception | None = None
         try:
             answer = ask_model_until_complete(client, model, history, cancel)
         except (OpenAIError, RuntimeError) as exc:
             history.pop()
             print(f"Model request failed: {exc}", file=log)
-            output(display, "Model error.\nCheck the host log.")
-            time.sleep(1.0)
-            continue
+            request_error = exc
         finally:
             watch_stop.set()
             if watcher is not None:
@@ -338,12 +338,18 @@ def run(
                 signal.signal(signal.SIGINT, previous_signal_handler)
             stop.set()
             animation.join()
+        display.clear()
+        if request_error is not None:
+            output(display, "Model error.\nCheck the host log.")
+            time.sleep(1.0)
+            continue
         if answer is None:
             history.pop()
             output(display, "Stopped.")
             time.sleep(0.8)
             continue
         history.append({"role": "assistant", "content": answer})
+        display.clear()
         output(display, answer, bell=True)
         time.sleep(1.5)
 
