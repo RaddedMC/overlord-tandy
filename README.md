@@ -37,6 +37,18 @@ The program reads the first `openai`-type endpoint with a `choice-model` from
 - `/new`: Clear the conversation history and start a new chat
 - `/help`: Shows commands
 
+### Tandy Setup
+
+Use `updo.py` under `tclient/tools` to upload the Native client to the Tandy, the usage is: `python updo.py ../text-basic/tb.do /dev/ttyUSB0`. 
+ * Where `/dev/ttyUSB9` is the COM port of the tandy.
+
+* Use TELCOM press F4
+* Setup the STAT line, press F3 then type 881NDNN, press enter
+* Then F2 to download, name it `tb`
+
+* Press F8 to go to menu, then go to BASIC
+* Type run "tb"
+
 ### Using an emulator
 
 Use VirtualT to run Overlord Tandy in an emulator of the Tandy 200.
@@ -52,6 +64,3 @@ Use the following settings, where host port is one of the links above:
 ![UI.png](images/UI.png)
 ![dropdown.png](images/dropdown.png)
 ![Peripheral Setup.png](images/Peripheral%20Setup.png)
-
-Use `updo.py` under `tclient/tools`, the usage is: `python updo.py ../text-basic/tb.do /dev/ttyUSB0`. 
- * Where `/dev/ttyUSB9` is the COM port of the tandy.
