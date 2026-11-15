@@ -40,7 +40,9 @@ STARTUP_SCREEN = (
     "          #  #            #  #          \n"
     "          #  #            # #           \n"
     "           ##              #            \n"
+    "\n"
     "Sam took all the RAM, 40kB is all u get \n"
+    "\n"
 )
 
 
@@ -54,7 +56,7 @@ HELP_TEXT = (
     "/help shows this help.\n"
     "/quit exits the program.\n"
     "\n"
-    "Press enter to continue\n"
+    "Press enter to continue "
 )
 
 
@@ -106,12 +108,20 @@ def ascii_text(text: str) -> str:
 
 # Wrap one short of the full width: a full-width line makes the Tandy's cursor
 # wrap on its own, so the line break after it would leave a blank row.
-def display_lines(text: str, width: int = DISPLAY_WIDTH - 1) -> list[str]:
+def display_lines(
+    text: str, width: int = DISPLAY_WIDTH - 1, drop_whitespace: bool = True
+) -> list[str]:
     """Wrap text into display-width ASCII lines."""
     safe = ascii_text(text).replace("\r", "")
     lines: list[str] = []
     for source_line in safe.split("\n"):
-        lines.extend(wrap(source_line, width=width, replace_whitespace=False) or [""])
+        wrapped = wrap(
+            source_line,
+            width=width,
+            replace_whitespace=False,
+            drop_whitespace=drop_whitespace,
+        )
+        lines.extend(wrapped or [""])
     return lines
 
 
@@ -145,8 +155,11 @@ class TandyDisplay:
     def move_to_row(self, row: int) -> None:
         self.write(f"\x1bY{chr(32 + row)}{chr(32)}")  # Char: "ESC Y <row> <col>"
 
-    def render(self, text: str, bell: bool = False, clear: bool = True) -> None:
-        lines = [line[:DISPLAY_WIDTH] for line in display_lines(text)][:DISPLAY_HEIGHT]
+    def render(
+        self, text: str, bell: bool = False, clear: bool = True, drop_whitespace: bool = True
+    ) -> None:
+        lines = display_lines(text, drop_whitespace=drop_whitespace)
+        lines = [line[:DISPLAY_WIDTH] for line in lines][:DISPLAY_HEIGHT]
         if clear or self.row == 0:
             self.clear()
             self.write("\r\n".join(lines))
@@ -176,7 +189,10 @@ class CliDisplay:
     def render(self, text: str, bell: bool = False) -> None:
         self.clear()
         self.write(text)
-    def render(self, text: str, bell: bool = False, clear: bool = True) -> None:
+    def render(
+        self, text: str, bell: bool = False, clear: bool = True, drop_whitespace: bool = True
+    ) -> None:
+        # The terminal prints text as-is, so whitespace is never dropped here.
         if clear:
             self.clear()
         else:
@@ -189,9 +205,15 @@ class CliDisplay:
         self.render(STARTUP_SCREEN)
 
 
-def output(display: Any, text: str, bell: bool = False, clear: bool = True) -> None:
+def output(
+    display: Any,
+    text: str,
+    bell: bool = False,
+    clear: bool = True,
+    drop_whitespace: bool = True,
+) -> None:
     """Send application output through the active display."""
-    display.render(text, bell=bell, clear=clear)
+    display.render(text, bell=bell, clear=clear, drop_whitespace=drop_whitespace)
 
 
 def make_client(config: ApiConfig) -> OpenAI:
@@ -324,12 +346,12 @@ def run(
 
     time.sleep(3.0)  # Show the title screen for a bit
     display.clear()
-    output(display, HELP_TEXT)
+    output(display, HELP_TEXT, drop_whitespace=False)
 
     input_reader() # Allow user to choose when to go next
 
     while True:
-        output(display, "You > ")
+        output(display, "You > ", drop_whitespace=False)
         try:
             user_text = input_reader()
         except EOFError:
@@ -340,7 +362,7 @@ def run(
         if not user_text:
             continue
         if user_text.lower() == "/help":
-            output(display, HELP_TEXT)
+            output(display, HELP_TEXT, drop_whitespace=False)
             time.sleep(1.0)
             continue
         if user_text.lower() in {"/new", "/newchat"}:
