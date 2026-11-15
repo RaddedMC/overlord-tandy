@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 import threading
 import time
@@ -116,8 +117,7 @@ class TandyDisplay:
 
     def render(self, text: str, bell: bool = False) -> None:
         lines = display_lines(text)[:DISPLAY_HEIGHT]
-        # self.clear()
-        self.write("\n".join(line[:DISPLAY_WIDTH] for line in lines))
+        self.write("\r\n".join(line[:DISPLAY_WIDTH] for line in lines))
         if bell:
             self.write("\x07")  # Char: "BEL"
 
@@ -131,11 +131,14 @@ class CliDisplay:
     def clear(self) -> None:
         print("\x1b[2J\x1b[H", end="", flush=True)  # Char: "ESC[2J ESC[H"
 
+    def write(self, text: str) -> None:
+        print(ascii_text(text), end="", flush=True)
+
     def render(self, text: str, bell: bool = False) -> None:
         self.clear()
-        print(ascii_text(text), end="", flush=True)
+        self.write(text)
         if bell:
-            print("\x07", end="", flush=True)  # Char: "BEL"
+            self.write("\x07")  # Char: "BEL"
 
     def startup(self) -> None:
         self.render(STARTUP_SCREEN)
@@ -175,13 +178,53 @@ def ask_model(client: OpenAI, model: str, messages: list[dict[str, str]]) -> str
     return ascii_text(content).strip()
 
 
+def ask_model_until_complete(
+    client: OpenAI,
+    model: str,
+    messages: list[dict[str, str]],
+    cancel: threading.Event,
+) -> str | None:
+    """Run a model request in the background so Ctrl-C can cancel its output."""
+    from openai import OpenAIError
+
+    result: dict[str, Any] = {}
+
+    def request() -> None:
+        try:
+            result["answer"] = ask_model(client, model, messages)
+        except (OpenAIError, RuntimeError) as exc:
+            result["error"] = exc
+
+    request_thread = threading.Thread(target=request, daemon=True)
+    request_thread.start()
+    while request_thread.is_alive():
+        if cancel.wait(0.1):
+            return None
+    request_thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result["answer"]
+
+
+def watch_serial_cancel(
+    connection: Any, cancel: threading.Event, stop: threading.Event
+) -> None:
+    """Watch for Ctrl-C from the Tandy while a model request is running."""
+    while not stop.is_set():
+        if connection.read(1) == b"\x03":
+            cancel.set()
+            return
+
+
 def thinking(display: Any, stop: threading.Event) -> None:
     """Animate a small status message while the model request is running."""
-    frames = ("Thinking.   ", "Thinking..  ", "Thinking...")
+    frames = (".", "..", "...")
     index = 0
+    display.clear()
+    display.write("Thinking")
     while not stop.is_set():
-        display.clear()
-        output(display, frames[index % len(frames)])
+        previous = frames[(index - 1) % len(frames)] if index else ""
+        display.write("\b" * len(previous) + frames[index % len(frames)])
         index += 1
         stop.wait(0.35)
 
@@ -261,19 +304,45 @@ def run(
         stop = threading.Event()
         animation = threading.Thread(target=thinking, args=(display, stop), daemon=True)
         animation.start()
+        cancel = threading.Event()
+        watch_stop = threading.Event()
+        watcher: threading.Thread | None = None
+        previous_signal_handler: Any = None
+        if connection is None:
+            previous_signal_handler = signal.getsignal(signal.SIGINT)
+
+            def cancel_from_signal(_signum: int, _frame: Any) -> None:
+                cancel.set()
+
+            signal.signal(signal.SIGINT, cancel_from_signal)
+        else:
+            watcher = threading.Thread(
+                target=watch_serial_cancel,
+                args=(connection, cancel, watch_stop),
+                daemon=True,
+            )
+            watcher.start()
         try:
-            answer = ask_model(client, model, history)
+            answer = ask_model_until_complete(client, model, history, cancel)
         except (OpenAIError, RuntimeError) as exc:
             history.pop()
             print(f"Model request failed: {exc}", file=log)
-            stop.set()
-            animation.join()
             output(display, "Model error.\nCheck the host log.")
             time.sleep(1.0)
             continue
         finally:
+            watch_stop.set()
+            if watcher is not None:
+                watcher.join()
+            if connection is None and previous_signal_handler is not None:
+                signal.signal(signal.SIGINT, previous_signal_handler)
             stop.set()
             animation.join()
+        if answer is None:
+            history.pop()
+            output(display, "Stopped.")
+            time.sleep(0.8)
+            continue
         history.append({"role": "assistant", "content": answer})
         output(display, answer, bell=True)
         time.sleep(1.5)
@@ -297,6 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cli:
             display = CliDisplay()
+            display.clear()
             display.startup()
             config = load_api_config()
             client = make_client(config)
@@ -305,6 +375,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             with serial.Serial(args.device, SERIAL_BAUDRATE, timeout=0.2) as connection:
                 display = TandyDisplay(connection)
+                display.clear()
                 display.startup()
                 config = load_api_config()
                 client = make_client(config)
