@@ -21,3 +21,23 @@ python3 overlord_tandy.py --cli
 ## Commands
 - `/new`: Clear the conversation history and start a new chat
 - `/quit`: Exit the program
+
+
+## Using an emulator
+
+Use VirtualT to run Overlord Tandy in an emulator of the Tandy 200.
+
+You need to set-up a loopback using `socat` which you can install with your fav package manager, then run:
+ * macOS `socat -d -d pty,raw,echo=0,link=/tmp/ttyUSB9 pty,raw,echo=0,link=/tmp/ttyV1`
+ * Linux `socat -d -d pty,raw,echo=0,link=/dev/ttyUSB9 pty,raw,echo=0,link=/dev/ttyV1`
+
+Install [VirtualT](https://github.com/usymmij/VirtualT) and build from source, you also need `fltk` which you can install with your fav package manager.
+
+Use the following settings, where host port is one of the links above:
+
+![UI.png](images/UI.png)
+![dropdown.png](images/dropdown.png)
+![Peripheral Setup.png](images/Peripheral%20Setup.png)
+
+Use `updo.py` under `tclient/tools`, the usage is: `python updo.py ../text-basic/tb.do /dev/ttyUSB0`. 
+ * Where `/dev/ttyUSB0` is the COM port of the tandy.
