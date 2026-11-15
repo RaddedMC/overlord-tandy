@@ -33,9 +33,7 @@ STARTUP_SCREEN = (
 )
 
 SYSTEM_PROMPT = """You are Overlord Tandy, a helpful AI running on a Tandy 200.
-Reply in plain ASCII only. Keep every reply brief: at most 5 short lines,
-with no line longer than 40 characters. Do not use markdown, colors, emojis,
-or characters outside the ASCII charset."""
+Reply in plain ASCII only. Keep every reply brief: at most 15 short lines. Do not use markdown, colors, emojis, or characters outside the ASCII charset."""
 
 
 @dataclass(frozen=True)
@@ -204,7 +202,7 @@ def run(
         else:
             input_reader = lambda: read_input(connection)
     history: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    output(display, "Overlord Tandy ready.\nType a message.\n/new starts a new chat.")
+    output(display, "Overlord Tandy ready.\nType a message.\n/new starts a new chat.\n/quit ends the program.\n")
 
     while True:
         output(display, "Your turn.\n> ")

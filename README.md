@@ -1,6 +1,6 @@
 # Overlord Tandy
 
-An ASCII-only AI terminal for a Tandy 200 over serial.
+Since Sam Altman is stealing all our RAM, we built an AI agent to run on a Tandy 200 from 1984 -- a system with 40 KB of RAM!
 
 ## Setup
 
@@ -18,4 +18,6 @@ To run it directly in your local terminal instead, use:
 python3 overlord_tandy.py --cli
 ```
 
-Type `/new` to clear the conversation. `/quit` exits the program.
+## Commands
+- `/new`: Clear the conversation history and start a new chat
+- `/quit`: Exit the program
