@@ -18,9 +18,9 @@ from openai import OpenAI, OpenAIError
 
 DISPLAY_WIDTH = 40
 DISPLAY_HEIGHT = 15
-SERIAL_DEVICE = "/dev/ttyUSB0"
+SERIAL_DEVICE = "/dev/ttys010"
 SERIAL_BAUDRATE = 1200
-CONFIG_PATH = Path("/home") / os.environ.get("USER", "") / "ai_apis.json"
+CONFIG_PATH = Path("/Users") / os.environ.get("USER", "") / "ai_apis.json"
 
 # Replace this placeholder with a compact ASCII startup design if desired.
 STARTUP_SCREEN = (
@@ -103,14 +103,14 @@ class TandyDisplay:
         self.connection.write(ascii_text(text).encode("ascii"))
 
     def clear(self) -> None:
-        self.write("\x1b[2J\x1b[H")
+        self.write("\x1bE")  # Char: "ESC E"
 
     def render(self, text: str, bell: bool = False) -> None:
         lines = display_lines(text)[:DISPLAY_HEIGHT]
-        self.clear()
+        # self.clear()
         self.write("\n".join(line[:DISPLAY_WIDTH] for line in lines))
         if bell:
-            self.write("\x07")
+            self.write("\x07")  # Char: "BEL"
 
     def startup(self) -> None:
         self.render(STARTUP_SCREEN)
@@ -120,13 +120,13 @@ class CliDisplay:
     """Renderer for a normal terminal."""
 
     def clear(self) -> None:
-        print("\x1b[2J\x1b[H", end="", flush=True)
+        print("\x1b[2J\x1b[H", end="", flush=True)  # Char: "ESC[2J ESC[H"
 
     def render(self, text: str, bell: bool = False) -> None:
         self.clear()
         print(ascii_text(text), end="", flush=True)
         if bell:
-            print("\x07", end="", flush=True)
+            print("\x07", end="", flush=True)  # Char: "BEL"
 
     def startup(self) -> None:
         self.render(STARTUP_SCREEN)
@@ -186,12 +186,12 @@ def read_input(connection: Any) -> str:
         if character in "\r\n":
             connection.write(b"\r\n")
             return "".join(characters).strip()
-        if character in "\b\x7f":
+        if character in "\b\x7f":  # Char: "DEL"
             if characters:
                 characters.pop()
                 connection.write(b"\b \b")
             continue
-        if character == "\x03":
+        if character == "\x03":  # Char: "ETX"
             raise KeyboardInterrupt
         if 32 <= ord(character) <= 126:
             characters.append(character)
