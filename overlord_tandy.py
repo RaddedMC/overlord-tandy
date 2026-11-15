@@ -41,7 +41,6 @@ STARTUP_SCREEN = (
     "          #  #            # #           \n"
     "           ##              #            \n"
     "Sam took all the RAM, this is all u get \n"
-    "                > ENTER to continue...  \n"
 )
 
 
