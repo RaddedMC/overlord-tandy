@@ -10,10 +10,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import wrap
-from typing import Any, Callable, TextIO
+from typing import TYPE_CHECKING, Any, Callable, TextIO
 
 import serial
-from openai import OpenAI, OpenAIError
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 DISPLAY_WIDTH = 40
 DISPLAY_HEIGHT = 15
@@ -23,8 +25,8 @@ CONFIG_PATH = Path.home() / "ai_apis.json"
 
 # Replace this placeholder with a compact ASCII startup design if desired.
 STARTUP_SCREEN = (
-    "  OVERLORD                              \n"
-    "  TANDY                #                \n"
+    "  OVERLORD TANDY                        \n"
+    "  Now loading...       #                \n"
     "                      ##                \n"
     "                 #   # #                \n"
     "                # # #   #               \n"
@@ -146,6 +148,8 @@ def output(display: Any, text: str, bell: bool = False) -> None:
 
 def make_client(config: ApiConfig) -> OpenAI:
     """Create the OpenAI client for an OpenAI-compatible endpoint."""
+    from openai import OpenAI
+
     return OpenAI(api_key=config.key, base_url=config.url)
 
 
@@ -219,6 +223,8 @@ def run(
     input_reader: Callable[[], str] | None = None,
 ) -> None:
     """Run the interactive chat loop."""
+    from openai import OpenAIError
+
     if display is None:
         if connection is None:
             raise RuntimeError("A display or serial connection is required.")
