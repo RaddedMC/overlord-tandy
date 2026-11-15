@@ -8,6 +8,7 @@ import signal
 import sys
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import wrap
@@ -104,9 +105,39 @@ def load_api_config(path: Path = CONFIG_PATH) -> ApiConfig:
     raise RuntimeError("No usable openai-type API was found in the configuration.")
 
 
+# Typographic punctuation models often send, mapped to plain ASCII.
+ASCII_REPLACEMENTS = str.maketrans({
+    "\u2018": "'",  # Char: "‘"
+    "\u2019": "'",  # Char: "’"
+    "\u201a": "'",  # Char: "‚"
+    "\u201b": "'",  # Char: "‛"
+    "\u2032": "'",  # Char: "′"
+    "\u201c": '"',  # Char: "“"
+    "\u201d": '"',  # Char: "”"
+    "\u201e": '"',  # Char: "„"
+    "\u201f": '"',  # Char: "‟"
+    "\u2033": '"',  # Char: "″"
+    "\u00ab": '"',  # Char: "«"
+    "\u00bb": '"',  # Char: "»"
+    "\u2010": "-",  # Char: "‐"
+    "\u2011": "-",  # Char: "‑"
+    "\u2012": "-",  # Char: "‒"
+    "\u2013": "-",  # Char: "–"
+    "\u2014": "--",  # Char: "—"
+    "\u2212": "-",  # Char: "−"
+    "\u2026": "...",  # Char: "…"
+    "\u2022": "*",  # Char: "•"
+    "\u00a0": " ",  # Char: "NBSP"
+    "\t": " ",
+})
+
+
 def ascii_text(text: str) -> str:
     """Return text safe for the Tandy's ASCII-only display."""
-    return text.encode("ascii", "replace").decode("ascii").replace("\t", " ")
+    text = text.translate(ASCII_REPLACEMENTS)
+    # Split accented letters into letter + accent so the accent can be dropped (é -> e).
+    text = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    return text.encode("ascii", "replace").decode("ascii")
 
 
 # Wrap one short of the full width: a full-width line makes the Tandy's cursor
