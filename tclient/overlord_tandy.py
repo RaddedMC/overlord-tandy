@@ -2,7 +2,9 @@
 
 tb.do runs on the Tandy and does its own line editing, title screen and
 "thinking" animation. It sends each typed line ending in CR, and shows each
-line it receives (ending in CR, at most 39 chars) as a right-aligned reply.
+line it receives (at most 39 chars) as a right-aligned reply. The first reply
+line ends in CR, which clears "thinking"; the rest end in RS (CHR$(30)), which
+prints them without the blank prompt row a CR would leave between lines.
 This host only reads those lines, asks the model and sends the answer back.
 """
 
@@ -27,6 +29,8 @@ if TYPE_CHECKING:
 SERIAL_DEVICE = "/dev/ttyUSB0"
 SERIAL_BAUDRATE = 9600  # tb.do opens "COM:88N1ENN": 9600 baud, 8N1, XON/XOFF.
 LINE_WIDTH = 39  # tb.do keeps at most 39 chars of each received line.
+FIRST_LINE_END = "\r"  # Clears "thinking" and starts the reply on a new row.
+NEXT_LINE_END = "\x1e"  # Char: "RS" -- continues the reply on the next row.
 LINE_DELAY = 0.2  # Seconds between lines, so the BASIC program can keep up.
 MAX_TOKENS = 2048  # Longest reply the model may send; longer ones are cut off.
 REQUEST_TIMEOUT = 60  # Seconds before giving up on one API and trying the next.
@@ -142,7 +146,8 @@ def send_response(connection: Any, text: str) -> None:
     lines = reply_lines(text)
     debug(f"TX {len(lines)} line(s)")
     for number, line in enumerate(lines, start=1):
-        data = (line + "\r\n").encode("ascii")
+        ending = FIRST_LINE_END if number == 1 else NEXT_LINE_END
+        data = (line + ending).encode("ascii")
         started = time.monotonic()
         try:
             connection.write(data)
