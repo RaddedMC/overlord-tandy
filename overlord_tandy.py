@@ -254,10 +254,9 @@ def watch_serial_cancel(
 
 def thinking(display: Any, stop: threading.Event) -> None:
     """Animate a small status message while the model request is running."""
-    frames = (".", "..", "...")
+    frames = ("Thinking.", "Thinking..", "Thinking...")
     index = 0
     display.clear()
-    display.write("Thinking")
     while not stop.is_set():
         output(display, frames[index % len(frames)])
         index += 1
@@ -314,7 +313,7 @@ def run(
             input_reader = lambda: read_input(connection)
     history: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    input_reader()  # Allow user to choose when to go next
+    time.sleep(3.0)  # Show the title screen for a bit
     display.clear()
     output(display, "Overlord Tandy ready.\nType a message.\n/new starts a new chat.\n/quit exits the program.\nPress enter to start.")
 
