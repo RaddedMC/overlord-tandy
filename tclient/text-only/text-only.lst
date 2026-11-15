@@ -1,0 +1,227 @@
+ AS V1.42 Beta [Bld 307] - Source File text-only.asm - Page 1 - 11/15/2026 12:09:01 PM
+
+
+    1/   0 :                            ; Tandy 200 serial chat - 8085
+    2/   0 :                            ; Type text + ENTER -> sent over RS-232 (9600 8N1)
+    3/   0 :                            ; Received lines are shown right-aligned.
+    4/   0 :                            ;
+    5/   0 :                            ; !! ROM entry points below must be verified against the T200 ROM map !!
+    6/   0 :                            ; (values shown are the Model 100 ones as I recall them; T200 differs)
+    7/   0 :                                    CPU  8085
+    8/EEB0 :                                    ORG  0EEB0h             ; = HIMEM 61104
+    9/EEB0 :                            
+   10/EEB0 : =503CH                     LCD     EQU  503Ch              ; print char in A to screen     (VERIFY)
+   11/EEB0 : =8B03H                     KYREAD  EQU  8B03h              ; poll keyboard: A=key, Z=none  (VERIFY)
+   12/EEB0 : =8643H                     SD232   EQU  8643h              ; send A out RS-232             (VERIFY)
+   13/EEB0 : =8519H                     RV232   EQU  8519h              ; recv RS-232: A=char, Z=none   (VERIFY)
+   14/EEB0 : =191DH                     SETSER  EQU  191Dh              ; init UART, HL -> STAT string  (FILL IN)
+   15/EEB0 :                            
+   16/EEB0 : =27H                       WIDTH   EQU  39                 ; usable columns (40 minus 1 to avoid wrap)
+   17/EEB0 : =0DH                       CR      EQU  0Dh
+   18/EEB0 : =0AH                       LF      EQU  0Ah
+   19/EEB0 : =8H                        BS      EQU  08h
+   20/EEB0 :                            
+   21/EEB0 : 31 75 F0                   START:  LXI  SP,STACK
+   22/EEB3 : 21 D9 EF                           LXI  H,COMSTR           ; "88N1E" = 9600 baud, 8 bits, no parity
+   23/EEB6 : CD 1D 19                           CALL SETSER
+   24/EEB9 : AF                                 XRA  A
+   25/EEBA : 32 E0 EF                           STA  ILEN
+   26/EEBD : 32 E1 EF                           STA  RLEN
+   27/EEC0 :                            
+   28/EEC0 :                            ; ---------------- main loop ----------------
+   29/EEC0 : CD 03 8B                   LOOP:   CALL KYREAD
+   30/EEC3 : CA 49 EF                           JZ   CHKRX
+   31/EEC6 : FE 0D                              CPI  CR
+   32/EEC8 : CA 09 EF                           JZ   SEND
+   33/EECB : FE 08                              CPI  BS
+   34/EECD : CA EC EE                           JZ   BKSP
+   35/EED0 : 47                                 MOV  B,A                ; store typed char in IBUF
+   36/EED1 : 3A E0 EF                           LDA  ILEN
+   37/EED4 : FE 27                              CPI  WIDTH
+   38/EED6 : D2 49 EF                           JNC  CHKRX              ; line full
+   39/EED9 : 5F                                 MOV  E,A
+   40/EEDA : 16 00                              MVI  D,0
+   41/EEDC : 21 E5 EF                           LXI  H,IBUF
+   42/EEDF : 19                                 DAD  D
+   43/EEE0 : 70                                 MOV  M,B
+   44/EEE1 : 3C                                 INR  A
+   45/EEE2 : 32 E0 EF                           STA  ILEN
+   46/EEE5 : 78                                 MOV  A,B
+   47/EEE6 : CD 3C 50                           CALL LCD                ; echo
+   48/EEE9 : C3 C0 EE                           JMP  LOOP
+   49/EEEC :                            
+   50/EEEC : 3A E0 EF                   BKSP:   LDA  ILEN
+   51/EEEF : B7                                 ORA  A
+   52/EEF0 : CA C0 EE                           JZ   LOOP
+   53/EEF3 : 3D                                 DCR  A
+   54/EEF4 : 32 E0 EF                           STA  ILEN
+   55/EEF7 : 3E 08                              MVI  A,BS
+   56/EEF9 : CD 3C 50                           CALL LCD
+   57/EEFC : 3E 20                              MVI  A,' '
+   58/EEFE : CD 3C 50                           CALL LCD
+   59/EF01 : 3E 08                              MVI  A,BS
+   60/EF03 : CD 3C 50                           CALL LCD
+ AS V1.42 Beta [Bld 307] - Source File text-only.asm - Page 2 - 11/15/2026 12:09:01 PM
+
+
+   61/EF06 : C3 C0 EE                           JMP  LOOP
+   62/EF09 :                            
+   63/EF09 :                            ; ---------------- transmit input line ----------------
+   64/EF09 : 21 E5 EF                   SEND:   LXI  H,IBUF
+   65/EF0C : 22 E3 EF                           SHLD PTR
+   66/EF0F : 3A E0 EF                           LDA  ILEN
+   67/EF12 : 32 E2 EF                           STA  CNT
+   68/EF15 : 3A E2 EF                   SLOOP:  LDA  CNT
+   69/EF18 : B7                                 ORA  A
+   70/EF19 : CA 2E EF                           JZ   SDONE
+   71/EF1C : 3D                                 DCR  A
+   72/EF1D : 32 E2 EF                           STA  CNT
+   73/EF20 : 2A E3 EF                           LHLD PTR
+   74/EF23 : 7E                                 MOV  A,M
+   75/EF24 : 23                                 INX  H
+   76/EF25 : 22 E3 EF                           SHLD PTR
+   77/EF28 : CD 43 86                           CALL SD232
+   78/EF2B : C3 15 EF                           JMP  SLOOP
+   79/EF2E : 3E 0D                      SDONE:  MVI  A,CR
+   80/EF30 : CD 43 86                           CALL SD232
+   81/EF33 : 3E 0A                              MVI  A,LF
+   82/EF35 : CD 43 86                           CALL SD232
+   83/EF38 : AF                                 XRA  A
+   84/EF39 : 32 E0 EF                           STA  ILEN
+   85/EF3C : 3E 0D                              MVI  A,CR               ; move local cursor to next line
+   86/EF3E : CD 3C 50                           CALL LCD
+   87/EF41 : 3E 0A                              MVI  A,LF
+   88/EF43 : CD 3C 50                           CALL LCD
+   89/EF46 : C3 C0 EE                           JMP  LOOP
+   90/EF49 :                            
+   91/EF49 :                            ; ---------------- receive ----------------
+   92/EF49 : CD 19 85                   CHKRX:  CALL RV232
+   93/EF4C : CA C0 EE                           JZ   LOOP
+   94/EF4F : FE 0D                              CPI  CR
+   95/EF51 : CA 71 EF                           JZ   SHOWRX
+   96/EF54 : FE 0A                              CPI  LF
+   97/EF56 : CA C0 EE                           JZ   LOOP
+   98/EF59 : 47                                 MOV  B,A
+   99/EF5A : 3A E1 EF                           LDA  RLEN
+  100/EF5D : FE 27                              CPI  WIDTH
+  101/EF5F : D2 C0 EE                           JNC  LOOP               ; drop overflow
+  102/EF62 : 5F                                 MOV  E,A
+  103/EF63 : 16 00                              MVI  D,0
+  104/EF65 : 21 0D F0                           LXI  H,RBUF
+  105/EF68 : 19                                 DAD  D
+  106/EF69 : 70                                 MOV  M,B
+  107/EF6A : 3C                                 INR  A
+  108/EF6B : 32 E1 EF                           STA  RLEN
+  109/EF6E : C3 C0 EE                           JMP  LOOP
+  110/EF71 :                            
+  111/EF71 :                            ; print RBUF right-aligned, then restore the in-progress input line
+  112/EF71 : 3E 0D                      SHOWRX: MVI  A,CR
+  113/EF73 : CD 3C 50                           CALL LCD
+  114/EF76 : 3A E1 EF                           LDA  RLEN
+  115/EF79 : 47                                 MOV  B,A
+  116/EF7A : 3E 27                              MVI  A,WIDTH
+  117/EF7C : 90                                 SUB  B
+  118/EF7D : 32 E2 EF                           STA  CNT                ; pad = WIDTH - RLEN
+  119/EF80 : 3A E2 EF                   PAD:    LDA  CNT
+  120/EF83 : B7                                 ORA  A
+ AS V1.42 Beta [Bld 307] - Source File text-only.asm - Page 3 - 11/15/2026 12:09:01 PM
+
+
+  121/EF84 : CA 93 EF                           JZ   PTXT
+  122/EF87 : 3D                                 DCR  A
+  123/EF88 : 32 E2 EF                           STA  CNT
+  124/EF8B : 3E 20                              MVI  A,' '
+  125/EF8D : CD 3C 50                           CALL LCD
+  126/EF90 : C3 80 EF                           JMP  PAD
+  127/EF93 : 21 0D F0                   PTXT:   LXI  H,RBUF
+  128/EF96 : 22 E3 EF                           SHLD PTR
+  129/EF99 : 3A E1 EF                           LDA  RLEN
+  130/EF9C : 32 E2 EF                           STA  CNT
+  131/EF9F : CD C2 EF                           CALL PRINTN
+  132/EFA2 : 3E 0D                              MVI  A,CR
+  133/EFA4 : CD 3C 50                           CALL LCD
+  134/EFA7 : 3E 0A                              MVI  A,LF
+  135/EFA9 : CD 3C 50                           CALL LCD
+  136/EFAC : AF                                 XRA  A
+  137/EFAD : 32 E1 EF                           STA  RLEN
+  138/EFB0 : 21 E5 EF                           LXI  H,IBUF             ; redraw what the user was typing
+  139/EFB3 : 22 E3 EF                           SHLD PTR
+  140/EFB6 : 3A E0 EF                           LDA  ILEN
+  141/EFB9 : 32 E2 EF                           STA  CNT
+  142/EFBC : CD C2 EF                           CALL PRINTN
+  143/EFBF : C3 C0 EE                           JMP  LOOP
+  144/EFC2 :                            
+  145/EFC2 :                            ; print CNT chars starting at (PTR) to screen
+  146/EFC2 : 3A E2 EF                   PRINTN: LDA  CNT
+  147/EFC5 : B7                                 ORA  A
+  148/EFC6 : C8                                 RZ
+  149/EFC7 : 3D                                 DCR  A
+  150/EFC8 : 32 E2 EF                           STA  CNT
+  151/EFCB : 2A E3 EF                           LHLD PTR
+  152/EFCE : 7E                                 MOV  A,M
+  153/EFCF : 23                                 INX  H
+  154/EFD0 : 22 E3 EF                           SHLD PTR
+  155/EFD3 : CD 3C 50                           CALL LCD
+  156/EFD6 : C3 C2 EF                           JMP  PRINTN
+  157/EFD9 :                            
+  158/EFD9 :                            ; ---------------- data ----------------
+  159/EFD9 : 38 38 4E 31 45 4E 4E       COMSTR: DB   '88N1ENN'
+  160/EFE0 : 00                         ILEN:   DB   0
+  161/EFE1 : 00                         RLEN:   DB   0
+  162/EFE2 : 00                         CNT:    DB   0
+  163/EFE3 : 00 00                      PTR:    DW   0
+  164/EFE5 :                            IBUF:   DS   40
+  165/F00D :                            RBUF:   DS   40
+  166/F035 :                                    DS   64
+  167/F075 : =0F075H                    STACK   EQU  $
+  168/F075 :                            
+ AS V1.42 Beta [Bld 307] - Source File text-only.asm - Page 4 - 11/15/2026 12:09:01 PM
+
+
+  Symbol Table (* = unused):
+  --------------------------
+
+*ARCHITECTURE :                                      "x86_64-unknown-linux" - |
+ BKSP :                       0EEEC C |  BS :                             8 - |
+*CASESENSITIVE :                  0 - |  CHKRX :                      0EF49 C |
+ CNT :                        0EFE2 C |  COMSTR :                     0EFD9 C |
+*CONSTPI :     3.141592653589793239 - |  CR :                            0D - |
+*DATE :                "11/15/2026" - | *FALSE :                          0 - |
+*FLOATMAX :   1.18973149535725E4932 - | *HAS64 :                          1 - |
+ IBUF :                       0EFE5 C |  ILEN :                       0EFE0 C |
+*INTWIDTH :                      80 - |  KYREAD :                      8B03 - |
+ LCD :                         503C - |  LF :                            0A - |
+*LISTON :                         1 - |  LOOP :                       0EEC0 C |
+*MACEXP :                         7 - | *MOMCPU :                      8085 - |
+*MOMCPUNAME :                "8085" - | *NESTMAX :                      100 - |
+ PAD :                        0EF80 C |  PRINTN :                     0EFC2 C |
+ PTR :                        0EFE3 C |  PTXT :                       0EF93 C |
+ RBUF :                       0F00D C | *RELAXED :                        0 - |
+ RLEN :                       0EFE1 C |  RV232 :                       8519 - |
+ SD232 :                       8643 - |  SDONE :                      0EF2E C |
+ SEND :                       0EF09 C |  SETSER :                      191D - |
+ SHOWRX :                     0EF71 C |  SLOOP :                      0EF15 C |
+ STACK :                      0F075 - | *START :                      0EEB0 C |
+*TIME :               "12:09:01 PM" - | *TRUE :                           1 - |
+*VERSION :                     142F - |  WIDTH :                         27 - |
+*Z80SYNTAX :                      0 - |
+
+     46 symbols
+     19 unused symbols
+
+ AS V1.42 Beta [Bld 307] - Source File text-only.asm - Page 5 - 11/15/2026 12:09:01 PM
+
+
+  Code Pages:
+  ----------
+
+STANDARD (0 changed characters)
+
+1 code page
+
+0.01 seconds assembly time
+
+    168 lines source file
+      2 passes
+      0 errors
+      0 warnings
