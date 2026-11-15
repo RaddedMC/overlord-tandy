@@ -26,8 +26,7 @@ CONFIG_PATH = Path.home() / "ai_apis.json"
 
 # Replace this placeholder with a compact ASCII startup design if desired.
 STARTUP_SCREEN = (
-    "  OVERLORD TANDY                        \n"
-    "  Now loading...       #                \n"
+    "  OVERLORD TANDY       #                \n"
     "                      ##                \n"
     "                 #   # #                \n"
     "                # # #   #               \n"
@@ -36,9 +35,7 @@ STARTUP_SCREEN = (
     "          #  #            #  #          \n"
     "          #  #            # #           \n"
     "           ##              #            \n"
-    "           #                            \n"
-    "                    github.com/raddedmc \n"
-    "                              /jarboer  \n"
+    "           #            Now loading...  \n"
 )
 
 
