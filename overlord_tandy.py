@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import threading
 import time
@@ -18,9 +17,9 @@ from openai import OpenAI, OpenAIError
 
 DISPLAY_WIDTH = 40
 DISPLAY_HEIGHT = 15
-SERIAL_DEVICE = "/dev/ttys010"
+SERIAL_DEVICE = "/dev/ttyUSB0"
 SERIAL_BAUDRATE = 1200
-CONFIG_PATH = Path("/Users") / os.environ.get("USER", "") / "ai_apis.json"
+CONFIG_PATH = Path.home() / "ai_apis.json"
 
 # Replace this placeholder with a compact ASCII startup design if desired.
 STARTUP_SCREEN = (
@@ -274,6 +273,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="use the local terminal instead of the Tandy serial connection",
     )
+    parser.add_argument(
+        "--device",
+        default=SERIAL_DEVICE,
+        help=f"serial device for the Tandy connection (default: {SERIAL_DEVICE})",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -285,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
             display.clear()
             run(None, client, config.model, display=display, input_reader=read_cli_input)
         else:
-            with serial.Serial(SERIAL_DEVICE, SERIAL_BAUDRATE, timeout=0.2) as connection:
+            with serial.Serial(args.device, SERIAL_BAUDRATE, timeout=0.2) as connection:
                 display = TandyDisplay(connection)
                 display.startup()
                 config = load_api_config()
