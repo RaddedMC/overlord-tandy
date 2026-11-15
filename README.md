@@ -2,7 +2,7 @@
 
 Since Sam Altman is stealing all our RAM, we built an AI agent to run on a Tandy 200 from 1984 -- a system with 40 KB of RAM!
 
-## Setup
+## Tellcom Version
 
 ```sh
 python3 -m pip install -r requirements.txt
@@ -10,7 +10,7 @@ python3 overlord_tandy.py
 ```
 
 The program reads the first `openai`-type endpoint with a `choice-model` from
-`/home/$USER/ai_apis.json`, then connects to `/dev/ttyUSB0` at 1200 baud.
+`/home/$USER/ai_apis.json` on Linux or `/Users/$USER/ai_apis.json` on macOS, then connects to `/dev/ttyUSB0` at 1200 baud.
 
 To run it directly in your local terminal instead, use:
 
@@ -18,12 +18,26 @@ To run it directly in your local terminal instead, use:
 python3 overlord_tandy.py --cli
 ```
 
-## Commands
+### Commands
 - `/new`: Clear the conversation history and start a new chat
+- `/help`: Shows commands
 - `/quit`: Exit the program
 
+## Native Tandy Version
 
-## Using an emulator
+```sh
+python3 -m pip install -r requirements.txt
+python3 tclient/overlord_tandy.py
+```
+
+The program reads the first `openai`-type endpoint with a `choice-model` from
+`/home/$USER/ai_apis.json` on Linux or `/Users/$USER/ai_apis.json` on macOS, then connects to `/dev/ttyUSB0` at 9600 baud.
+
+### Commands
+- `/new`: Clear the conversation history and start a new chat
+- `/help`: Shows commands
+
+### Using an emulator
 
 Use VirtualT to run Overlord Tandy in an emulator of the Tandy 200.
 
@@ -40,4 +54,4 @@ Use the following settings, where host port is one of the links above:
 ![Peripheral Setup.png](images/Peripheral%20Setup.png)
 
 Use `updo.py` under `tclient/tools`, the usage is: `python updo.py ../text-basic/tb.do /dev/ttyUSB0`. 
- * Where `/dev/ttyUSB0` is the COM port of the tandy.
+ * Where `/dev/ttyUSB9` is the COM port of the tandy.
