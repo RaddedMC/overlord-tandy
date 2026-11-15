@@ -175,9 +175,26 @@ def thinking(display: TandyDisplay, stop: threading.Event) -> None:
 
 
 def read_input(connection: Any) -> str:
-    """Read one user command or message from the serial terminal."""
-    raw = connection.readline()
-    return raw.decode("ascii", "replace").strip()
+    """Read one line from the Tandy, which sends input one character at a time."""
+    characters: list[str] = []
+    while True:
+        raw = connection.read(1)
+        if not raw:
+            continue
+        character = raw.decode("ascii", "replace")
+        if character in "\r\n":
+            connection.write(b"\r\n")
+            return "".join(characters).strip()
+        if character in "\b\x7f":
+            if characters:
+                characters.pop()
+                connection.write(b"\b \b")
+            continue
+        if character == "\x03":
+            raise KeyboardInterrupt
+        if 32 <= ord(character) <= 126:
+            characters.append(character)
+            connection.write(raw)
 
 
 def read_cli_input() -> str:
