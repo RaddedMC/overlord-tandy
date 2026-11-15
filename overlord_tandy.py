@@ -23,13 +23,21 @@ CONFIG_PATH = Path.home() / "ai_apis.json"
 
 # Replace this placeholder with a compact ASCII startup design if desired.
 STARTUP_SCREEN = (
-    "***************************************\n"
-    "*         OVERLORD TANDY              *\n"
-    "*       SERIAL AI TERMINAL            *\n"
-    "*                                     *\n"
-    "*             [ READY ]               *\n"
-    "***************************************"
+    "  OVERLORD                              \n"
+    "  TANDY                #                \n"
+    "                      ##                \n"
+    "                 #   # #                \n"
+    "                # # #   #               \n"
+    "               #   #    #               \n"
+    "###########   #          #    ##########\n"
+    "          #  #            #  #          \n"
+    "          #  #            # #           \n"
+    "           ##              #            \n"
+    "           #                            \n"
+    "                    github.com/raddedmc \n"
+    "                              /jarboer  \n"
 )
+
 
 SYSTEM_PROMPT = """You are Overlord Tandy, a helpful AI running on a Tandy 200.
 Reply in plain ASCII only. Keep every reply brief: at most 5 short lines,
