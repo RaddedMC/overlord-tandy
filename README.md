@@ -20,4 +20,5 @@ python3 overlord_tandy.py --cli
 
 ## Commands
 - `/new`: Clear the conversation history and start a new chat
+- `/cmd <request>`: Let the AI run Linux shell commands and inspect their results
 - `/quit`: Exit the program

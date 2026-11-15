@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -52,10 +53,38 @@ HELP_TEXT = (
     "\n"
     "/new starts a new chat.\n"
     "/help shows this help.\n"
+    "/cmd asks the AI to run Linux commands.\n"
     "/quit exits the program.\n"
     "\n"
     "Press enter to continue\n"
 )
+
+COMMAND_SYSTEM_PROMPT = """You are operating as a command-line agent.
+Use the run_shell_command tool whenever a Linux command is needed. Inspect
+tool results before deciding whether another command is necessary. Never
+claim a command ran unless the tool returned its result. When finished,
+reply briefly in plain ASCII. Do not use the tool for unrelated conversation."""
+
+SHELL_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_shell_command",
+            "description": "Run one Linux shell command and return its output.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The Linux shell command to execute.",
+                    }
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+        },
+    }
+]
 
 
 @dataclass(frozen=True)
@@ -201,7 +230,101 @@ def make_client(config: ApiConfig) -> OpenAI:
     return OpenAI(api_key=config.key, base_url=config.url)
 
 
-def ask_model(client: OpenAI, model: str, messages: list[dict[str, str]]) -> str:
+def message_text(message: Any) -> str:
+    """Extract response text from standard and reasoning-compatible messages."""
+    content = getattr(message, "content", None)
+    if not content:
+        content = getattr(message, "reasoning_content", None)
+    if not content:
+        content = getattr(message, "reasoning", None)
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("The model returned an empty response.")
+    return ascii_text(content).strip()
+
+
+def run_shell_command(command: str) -> str:
+    """Run one requested shell command and format its result for the model."""
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return json.dumps({"error": "Command timed out after 30 seconds."})
+    except OSError as exc:
+        return json.dumps({"error": f"Could not run command: {exc}"})
+
+    return json.dumps(
+        {
+            "exit_code": result.returncode,
+            "stdout": result.stdout[-8000:],
+            "stderr": result.stderr[-8000:],
+        }
+    )
+
+
+def ask_command_agent(
+    client: OpenAI, model: str, messages: list[dict[str, Any]]
+) -> str:
+    """Run the tool-calling loop for a /cmd request."""
+    for _ in range(8):
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.4,
+            max_tokens=512,
+            tools=SHELL_TOOLS,
+            tool_choice="auto",
+        )
+        if not response.choices:
+            raise RuntimeError("The model returned no choices.")
+        message = response.choices[0].message
+        tool_calls = getattr(message, "tool_calls", None) or []
+        if not tool_calls:
+            return message_text(message)
+
+        assistant_message = {
+            "role": "assistant",
+            "content": getattr(message, "content", None) or "",
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    },
+                }
+                for call in tool_calls
+            ],
+        }
+        messages.append(assistant_message)
+        for call in tool_calls:
+            if call.function.name != "run_shell_command":
+                raise RuntimeError(f"Unknown tool requested: {call.function.name}")
+            try:
+                arguments = json.loads(call.function.arguments)
+                command = arguments["command"]
+                if not isinstance(command, str) or not command.strip():
+                    raise ValueError("command must be a non-empty string")
+                result = run_shell_command(command)
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                result = json.dumps({"error": f"Invalid tool arguments: {exc}"})
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": result,
+                }
+            )
+    raise RuntimeError("The command agent reached its maximum of 8 tool rounds.")
+
+
+def ask_model(client: OpenAI, model: str, messages: list[dict[str, Any]]) -> str:
     """Request one concise response from the configured model."""
     response = client.chat.completions.create(
         model=model,
@@ -211,23 +334,15 @@ def ask_model(client: OpenAI, model: str, messages: list[dict[str, str]]) -> str
     )
     if not response.choices:
         raise RuntimeError("The model returned no choices.")
-    message = response.choices[0].message
-    content = getattr(message, "content", None)
-    if not content:
-        # Some reasoning models expose their answer in a provider-specific field.
-        content = getattr(message, "reasoning_content", None)
-    if not content:
-        content = getattr(message, "reasoning", None)
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("The model returned an empty response.")
-    return ascii_text(content).strip()
+    return message_text(response.choices[0].message)
 
 
 def ask_model_until_complete(
     client: OpenAI,
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     cancel: threading.Event,
+    command_agent: bool = False,
 ) -> str | None:
     """Run a model request in the background so Ctrl-C can cancel its output."""
     from openai import OpenAIError
@@ -236,7 +351,8 @@ def ask_model_until_complete(
 
     def request() -> None:
         try:
-            result["answer"] = ask_model(client, model, messages)
+            requester = ask_command_agent if command_agent else ask_model
+            result["answer"] = requester(client, model, messages)
         except (OpenAIError, RuntimeError) as exc:
             result["error"] = exc
 
@@ -352,7 +468,24 @@ def run(
             output(display, "Goodbye.")
             return
 
+        command_agent = user_text.lower().startswith("/cmd")
+        if command_agent and not user_text[4:].strip():
+            output(display, "Usage: /cmd <request>")
+            time.sleep(0.8)
+            continue
         history.append({"role": "user", "content": user_text})
+        if command_agent:
+            request = user_text[4:].strip()
+            request_messages: list[dict[str, Any]] = [
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT + "\n" + COMMAND_SYSTEM_PROMPT,
+                },
+                *history[1:-1],
+                {"role": "user", "content": request},
+            ]
+        else:
+            request_messages = history
         stop = threading.Event()
         animation = threading.Thread(target=thinking, args=(display, stop), daemon=True)
         animation.start()
@@ -377,7 +510,13 @@ def run(
         answer: str | None = None
         request_error: Exception | None = None
         try:
-            answer = ask_model_until_complete(client, model, history, cancel)
+            answer = ask_model_until_complete(
+                client,
+                model,
+                request_messages,
+                cancel,
+                command_agent=command_agent,
+            )
         except (OpenAIError, RuntimeError) as exc:
             history.pop()
             print(f"Model request failed: {exc}", file=log)
