@@ -4,33 +4,46 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import signal
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import wrap
-from typing import Any, Callable, TextIO
+from typing import TYPE_CHECKING, Any, Callable, TextIO
 
 import serial
-from openai import OpenAI, OpenAIError
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 DISPLAY_WIDTH = 40
 DISPLAY_HEIGHT = 15
 SERIAL_DEVICE = "/dev/ttyUSB0"
 SERIAL_BAUDRATE = 1200
-CONFIG_PATH = Path("/home") / os.environ.get("USER", "") / "ai_apis.json"
+CLEAR_DELAY = 0.2  # Seconds the Tandy needs to clear its LCD before taking more text.
+# The Tandy only buffers 64 received bytes, so send in small chunks no faster
+# than it can draw them, even when the port itself is faster (e.g. an emulator pty).
+WRITE_CHUNK = 16
+CHAR_DELAY = 1 / 100  # Seconds per character, a little slower than 1200 baud.
+CONFIG_PATH = Path.home() / "ai_apis.json"
 
 # Replace this placeholder with a compact ASCII startup design if desired.
 STARTUP_SCREEN = (
-    "***************************************\n"
-    "*         OVERLORD TANDY              *\n"
-    "*       SERIAL AI TERMINAL            *\n"
-    "*                                     *\n"
-    "*             [ READY ]               *\n"
-    "***************************************"
+    "  OVERLORD TANDY       #                \n"
+    "                      ##                \n"
+    "                 #   # #                \n"
+    "                # # #   #               \n"
+    "               #   #    #               \n"
+    "###########   #          #   ##########\n"
+    "          #  #            #  #          \n"
+    "          #  #            # #           \n"
+    "           ##              #            \n"
+    "Sam took all the RAM, this is all u get \n"
+    "                > ENTER to continue...  \n"
 )
+
 
 SYSTEM_PROMPT = """You are Overlord Tandy, a helpful AI running on a Tandy 200.
 Reply in plain ASCII only. Keep every reply brief: at most 15 short lines. Do not use markdown, colors, emojis, or characters outside the ASCII charset."""
@@ -82,7 +95,9 @@ def ascii_text(text: str) -> str:
     return text.encode("ascii", "replace").decode("ascii").replace("\t", " ")
 
 
-def display_lines(text: str, width: int = DISPLAY_WIDTH) -> list[str]:
+# Wrap one short of the full width: a full-width line makes the Tandy's cursor
+# wrap on its own, so the line break after it would leave a blank row.
+def display_lines(text: str, width: int = DISPLAY_WIDTH - 1) -> list[str]:
     """Wrap text into display-width ASCII lines."""
     safe = ascii_text(text).replace("\r", "")
     lines: list[str] = []
@@ -91,24 +106,50 @@ def display_lines(text: str, width: int = DISPLAY_WIDTH) -> list[str]:
     return lines
 
 
+def display_pages(text: str, height: int = DISPLAY_HEIGHT - 1) -> list[str]:
+    """Split text into screens, leaving the last row free for a prompt."""
+    lines = display_lines(text)
+    return ["\n".join(lines[i : i + height]) for i in range(0, len(lines), height)]
+
+
 class TandyDisplay:
     """Minimal 40x15 terminal renderer."""
 
     def __init__(self, connection: Any) -> None:
         self.connection = connection
+        self.row = 0  # Lines currently used on screen.
 
     def write(self, text: str) -> None:
-        self.connection.write(ascii_text(text).encode("ascii"))
+        data = ascii_text(text).encode("ascii")
+        for start in range(0, len(data), WRITE_CHUNK):
+            chunk = data[start : start + WRITE_CHUNK]
+            self.connection.write(chunk)
+            self.connection.flush()
+            time.sleep(len(chunk) * CHAR_DELAY)
 
     def clear(self) -> None:
-        self.write("\x1b[2J\x1b[H")
+        self.write("\x1bE")  # Char: "ESC E"
+        self.connection.flush()
+        time.sleep(CLEAR_DELAY)
+        self.row = 0
 
-    def render(self, text: str, bell: bool = False) -> None:
-        lines = display_lines(text)[:DISPLAY_HEIGHT]
-        self.clear()
-        self.write("\n".join(line[:DISPLAY_WIDTH] for line in lines))
+    def move_to_row(self, row: int) -> None:
+        self.write(f"\x1bY{chr(32 + row)}{chr(32)}")  # Char: "ESC Y <row> <col>"
+
+    def render(self, text: str, bell: bool = False, clear: bool = True) -> None:
+        lines = [line[:DISPLAY_WIDTH] for line in display_lines(text)][:DISPLAY_HEIGHT]
+        if clear or self.row == 0:
+            self.clear()
+            self.write("\r\n".join(lines))
+        elif self.row + len(lines) <= DISPLAY_HEIGHT:
+            self.write("\r\n" + "\r\n".join(lines))
+        else:
+            # Not enough room: overwrite the bottom lines instead of scrolling.
+            self.move_to_row(DISPLAY_HEIGHT - len(lines))
+            self.write("\r\n".join("\x1bK" + line for line in lines))  # Char: "ESC K"
+        self.row = min(self.row + len(lines), DISPLAY_HEIGHT)
         if bell:
-            self.write("\x07")
+            self.write("\x07")  # Char: "BEL"
 
     def startup(self) -> None:
         self.render(STARTUP_SCREEN)
@@ -118,25 +159,36 @@ class CliDisplay:
     """Renderer for a normal terminal."""
 
     def clear(self) -> None:
-        print("\x1b[2J\x1b[H", end="", flush=True)
+        print("\x1b[2J\x1b[H", end="", flush=True)  # Char: "ESC[2J ESC[H"
+
+    def write(self, text: str) -> None:
+        print(ascii_text(text), end="", flush=True)
 
     def render(self, text: str, bell: bool = False) -> None:
         self.clear()
+        self.write(text)
+    def render(self, text: str, bell: bool = False, clear: bool = True) -> None:
+        if clear:
+            self.clear()
+        else:
+            print()
         print(ascii_text(text), end="", flush=True)
         if bell:
-            print("\x07", end="", flush=True)
+            self.write("\x07")  # Char: "BEL"
 
     def startup(self) -> None:
         self.render(STARTUP_SCREEN)
 
 
-def output(display: Any, text: str, bell: bool = False) -> None:
+def output(display: Any, text: str, bell: bool = False, clear: bool = True) -> None:
     """Send application output through the active display."""
-    display.render(text, bell=bell)
+    display.render(text, bell=bell, clear=clear)
 
 
 def make_client(config: ApiConfig) -> OpenAI:
     """Create the OpenAI client for an OpenAI-compatible endpoint."""
+    from openai import OpenAI
+
     return OpenAI(api_key=config.key, base_url=config.url)
 
 
@@ -162,20 +214,77 @@ def ask_model(client: OpenAI, model: str, messages: list[dict[str, str]]) -> str
     return ascii_text(content).strip()
 
 
-def thinking(display: TandyDisplay, stop: threading.Event) -> None:
+def ask_model_until_complete(
+    client: OpenAI,
+    model: str,
+    messages: list[dict[str, str]],
+    cancel: threading.Event,
+) -> str | None:
+    """Run a model request in the background so Ctrl-C can cancel its output."""
+    from openai import OpenAIError
+
+    result: dict[str, Any] = {}
+
+    def request() -> None:
+        try:
+            result["answer"] = ask_model(client, model, messages)
+        except (OpenAIError, RuntimeError) as exc:
+            result["error"] = exc
+
+    request_thread = threading.Thread(target=request, daemon=True)
+    request_thread.start()
+    while request_thread.is_alive():
+        if cancel.wait(0.1):
+            return None
+    request_thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result["answer"]
+
+
+def watch_serial_cancel(
+    connection: Any, cancel: threading.Event, stop: threading.Event
+) -> None:
+    """Watch for Ctrl-C from the Tandy while a model request is running."""
+    while not stop.is_set():
+        if connection.read(1) == b"\x03":
+            cancel.set()
+            return
+
+
+def thinking(display: Any, stop: threading.Event) -> None:
     """Animate a small status message while the model request is running."""
-    frames = ("Thinking.   ", "Thinking..  ", "Thinking...")
+    frames = (".", "..", "...")
     index = 0
+    display.clear()
+    display.write("Thinking")
     while not stop.is_set():
         output(display, frames[index % len(frames)])
         index += 1
-        stop.wait(0.35)
+        stop.wait(0.5)
 
 
 def read_input(connection: Any) -> str:
-    """Read one user command or message from the serial terminal."""
-    raw = connection.readline()
-    return raw.decode("ascii", "replace").strip()
+    """Read one line from the Tandy, which sends input one character at a time."""
+    characters: list[str] = []
+    while True:
+        raw = connection.read(1)
+        if not raw:
+            continue
+        character = raw.decode("ascii", "replace")
+        if character in "\r\n":
+            connection.write(b"\r\n")
+            return "".join(characters).strip()
+        if character in "\b\x7f":  # Char: "DEL"
+            if characters:
+                characters.pop()
+                connection.write(b"\b \b")
+            continue
+        if character == "\x03":  # Char: "ETX"
+            raise KeyboardInterrupt
+        if 32 <= ord(character) <= 126:
+            characters.append(character)
+            connection.write(raw)
 
 
 def read_cli_input() -> str:
@@ -192,6 +301,8 @@ def run(
     input_reader: Callable[[], str] | None = None,
 ) -> None:
     """Run the interactive chat loop."""
+    from openai import OpenAIError
+
     if display is None:
         if connection is None:
             raise RuntimeError("A display or serial connection is required.")
@@ -202,10 +313,15 @@ def run(
         else:
             input_reader = lambda: read_input(connection)
     history: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    output(display, "Overlord Tandy ready.\nType a message.\n/new starts a new chat.\n/quit ends the program.\n")
+
+    input_reader()  # Allow user to choose when to go next
+    display.clear()
+    output(display, "Overlord Tandy ready.\nType a message.\n/new starts a new chat.\n/quit exits the program.\nPress enter to start.")
+
+    input_reader() # Allow user to choose when to go next
 
     while True:
-        output(display, "Your turn.\n> ")
+        output(display, "You > ")
         try:
             user_text = input_reader()
         except EOFError:
@@ -228,22 +344,60 @@ def run(
         stop = threading.Event()
         animation = threading.Thread(target=thinking, args=(display, stop), daemon=True)
         animation.start()
+        cancel = threading.Event()
+        watch_stop = threading.Event()
+        watcher: threading.Thread | None = None
+        previous_signal_handler: Any = None
+        if connection is None:
+            previous_signal_handler = signal.getsignal(signal.SIGINT)
+
+            def cancel_from_signal(_signum: int, _frame: Any) -> None:
+                cancel.set()
+
+            signal.signal(signal.SIGINT, cancel_from_signal)
+        else:
+            watcher = threading.Thread(
+                target=watch_serial_cancel,
+                args=(connection, cancel, watch_stop),
+                daemon=True,
+            )
+            watcher.start()
+        answer: str | None = None
+        request_error: Exception | None = None
         try:
-            answer = ask_model(client, model, history)
+            answer = ask_model_until_complete(client, model, history, cancel)
         except (OpenAIError, RuntimeError) as exc:
             history.pop()
             print(f"Model request failed: {exc}", file=log)
+            request_error = exc
+        finally:
+            watch_stop.set()
+            if watcher is not None:
+                watcher.join()
+            if connection is None and previous_signal_handler is not None:
+                signal.signal(signal.SIGINT, previous_signal_handler)
             stop.set()
             animation.join()
+        display.clear()
+        if request_error is not None:
             output(display, "Model error.\nCheck the host log.")
             time.sleep(1.0)
             continue
-        finally:
-            stop.set()
-            animation.join()
+        if answer is None:
+            history.pop()
+            output(display, "Stopped.")
+            time.sleep(0.8)
+            continue
         history.append({"role": "assistant", "content": answer})
-        output(display, answer, bell=True)
-        time.sleep(1.5)
+        display.clear()
+        pages = display_pages(answer + "\n\nDismiss: Press enter.")
+        for number, page in enumerate(pages, start=1):
+            output(display, page, bell=number == 1)
+            if number < len(pages):
+                output(display, f"More ({number}/{len(pages)}): Press enter.", clear=False)
+                input_reader()
+
+        input_reader() # Allow user to choose when to go next
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -254,23 +408,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="use the local terminal instead of the Tandy serial connection",
     )
+    parser.add_argument(
+        "--device",
+        default=SERIAL_DEVICE,
+        help=f"serial device for the Tandy connection (default: {SERIAL_DEVICE})",
+    )
     args = parser.parse_args(argv)
 
     try:
         if args.cli:
             display = CliDisplay()
+            display.clear()
             display.startup()
             config = load_api_config()
             client = make_client(config)
-            display.clear()
             run(None, client, config.model, display=display, input_reader=read_cli_input)
         else:
-            with serial.Serial(SERIAL_DEVICE, SERIAL_BAUDRATE, timeout=0.2) as connection:
+            with serial.Serial(args.device, SERIAL_BAUDRATE, timeout=0.2, xonxoff=True) as connection:
                 display = TandyDisplay(connection)
+                display.clear()
                 display.startup()
                 config = load_api_config()
                 client = make_client(config)
-                display.clear()
                 run(connection, client, config.model, display=display)
     except (RuntimeError, serial.SerialException) as exc:
         print(f"Overlord Tandy: {exc}", file=sys.stderr)
