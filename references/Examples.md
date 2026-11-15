@@ -76,6 +76,16 @@ Use to display the supported characters in the BASIC language on the Tandy.
 60 NEXT I
 ```
 
+## Basic Sound
+
+```basic
+10 ' C major scale
+20 FOR I = 1 TO 8
+30 READ P : SOUND P, 15
+40 NEXT I
+50 DATA 9394,8368,7456,7032,6269,5586,4976,4697
+```
+
 ## Play buddy riff
 
 ```basic
