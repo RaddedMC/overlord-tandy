@@ -40,13 +40,22 @@ STARTUP_SCREEN = (
     "          #  #            #  #          \n"
     "          #  #            # #           \n"
     "           ##              #            \n"
-    "                                        \n"
-    "Sam took all the RAM, this is all u get \n"
+    "Sam took all the RAM, 40kB is all u get \n"
 )
 
 
 SYSTEM_PROMPT = """You are Overlord Tandy, a helpful AI running on a Tandy 200.
 Reply in plain ASCII only. Keep every reply brief: at most 15 short lines. Do not use markdown, colors, emojis, or characters outside the ASCII charset."""
+
+HELP_TEXT = (
+    "Overlord Tandy ready.\n"
+    "\n"
+    "/new starts a new chat.\n"
+    "/help shows this help.\n"
+    "/quit exits the program.\n"
+    "\n"
+    "Press enter to continue\n"
+)
 
 
 @dataclass(frozen=True)
@@ -315,7 +324,7 @@ def run(
 
     time.sleep(3.0)  # Show the title screen for a bit
     display.clear()
-    output(display, "Overlord Tandy ready.\n\n/new starts a new chat.\n/quit exits the program.\n\nPress enter to start.")
+    output(display, HELP_TEXT)
 
     input_reader() # Allow user to choose when to go next
 
@@ -329,6 +338,10 @@ def run(
         except (OSError, UnicodeError) as exc:
             raise RuntimeError(f"Input failed: {exc}") from exc
         if not user_text:
+            continue
+        if user_text.lower() == "/help":
+            output(display, HELP_TEXT)
+            time.sleep(1.0)
             continue
         if user_text.lower() in {"/new", "/newchat"}:
             history = [{"role": "system", "content": SYSTEM_PROMPT}]
